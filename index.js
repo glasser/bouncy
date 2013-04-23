@@ -1,6 +1,7 @@
 var http = require('http');
 var https = require('https');
-var through = require('through');
+var stream = require('stream');
+var util = require('util');
 var parseArgs = require('./lib/parse_args.js');
 var insert = require('./lib/insert');
 var nextTick = typeof setImmediate !== 'undefined'
@@ -43,7 +44,7 @@ module.exports = function (opts, cb) {
                 args = parseArgs(arguments);
                 dst = args.stream;
             }
-            if (!dst) dst = through();
+            if (!dst) dst = new stream.PassThrough();
             
             function destroy () {
                 src.destroy();
@@ -68,23 +69,33 @@ module.exports = function (opts, cb) {
 };
 
 function stealthBuffer () {
+    // XXX update comment
     // the raw_ok test doesn't pass without this shim
     // instead of just using through() and then immediately calling .pause()
-    
-    var tr = through(write, end);
-    var buffer = [];
-    tr._resume = function () {
-        buffer.forEach(tr.queue.bind(tr));
-        buffer = undefined;
+    var streamClass = function () {
+      stream.Transform.call(this);
     };
-    return tr;
-    
-    function write (buf) {
-        if (buffer) buffer.push(buf)
-        else this.queue(buf)
-    }
-    function end () {
-        if (buffer) buffer.push(null)
-        else this.queue(null)
-    }
+    util.inherits(streamClass, stream.Transform);
+
+    var buffer = [];
+    var flushCallback = undefined;
+
+    streamClass.prototype._transform = function (buf, encoding, done) {
+      if (buffer) buffer.push(buf);
+      else this.push(buf);
+      done();
+    };
+    streamClass.prototype._flush = function (done) {
+      if (buffer) flushCallback = done;
+      else done();
+    };
+    streamClass.prototype._resume = function () {
+        buffer.forEach(this.push.bind(this));
+        buffer = undefined;
+        if (flushCallback) {
+          flushCallback();
+          flushCallback = undefined;
+        }
+    };
+    return new streamClass();
 }

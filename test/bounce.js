@@ -34,8 +34,8 @@ test('bounce', function (t) {
             t.equal(res.headers['content-type'], 'text/plain');
             
             var data = '';
-            res.on('data', function (buf) {
-                data += buf.toString();
+            res.on('readable', function () {
+                data += res.read();
             });
             
             res.on('end', function () {
